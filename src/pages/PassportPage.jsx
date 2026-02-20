@@ -11,6 +11,7 @@ import { Separator } from "@/components/ui/separator"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Progress } from "@/components/ui/progress"
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,7 @@ import {
   Mic,
   Save,
   Trash2,
+  Info,
 } from "lucide-react"
 
 const TT_TYPES = [
@@ -62,10 +64,16 @@ const MANUFACTURERS = [
   { id: "matroluxe", label: "Matroluxe" },
   { id: "emm", label: "EMM" },
   { id: "come_for", label: "Come-for" },
+  { id: "musson", label: "Musson" },
+  { id: "vegal", label: "Vegal" },
 ]
 
-function todayISO() {
-  return new Date().toISOString().slice(0, 10)
+function todayUA() {
+  const d = new Date()
+  const dd = String(d.getDate()).padStart(2, "0")
+  const mm = String(d.getMonth() + 1).padStart(2, "0")
+  const yyyy = d.getFullYear()
+  return `${dd}.${mm}.${yyyy}`
 }
 
 function clampInt(v, min, max) {
@@ -80,6 +88,11 @@ function isBlank(v) {
 
 function cn(...parts) {
   return parts.filter(Boolean).join(" ")
+}
+
+function pct(part, total) {
+  if (!total) return 0
+  return Math.round((part / total) * 100)
 }
 
 export function PassportPage() {
@@ -156,13 +169,42 @@ export function PassportPage() {
     confirmBackOpen: false,
     confirmGeoOpen: false,
     savedOpen: false,
+    photoPreview: null, // url
   })
 
-  const visitDate = useMemo(() => todayISO(), [])
+  const visitDate = useMemo(() => todayUA(), [])
 
   const isHighfoamSelected = useMemo(() => {
     return manufacturers.selected.some((x) => x.manufacturerId === "highfoam")
   }, [manufacturers.selected])
+
+  // ===== readiness (progress) =====
+  const readiness = useMemo(() => {
+    let score = 0
+    const add = (v) => (score += v)
+
+    const hasOrg = (orgTT.orgMode === "select" ? !isBlank(orgTT.orgQuery) : !isBlank(orgTT.orgNameNew))
+    const hasTT = (orgTT.ttMode === "select" ? !isBlank(orgTT.ttQuery) : !isBlank(orgTT.ttNameNew))
+    if (hasOrg) add(12)
+    if (hasTT) add(12)
+
+    const hasContacts = !isBlank(contacts.contactName) || !isBlank(contacts.phone) || !isBlank(contacts.ttTypeId)
+    if (hasContacts) add(8)
+
+    const hasAddr = !isBlank(address.city) && !isBlank(address.street) && !isBlank(address.house)
+    if (hasAddr) add(10)
+    if (address.geo) add(10)
+
+    if (photos.length) add(12)
+    if (manufacturers.selected.length) add(14)
+
+    const hasSegments = (clampInt(pricing.econom, 0, 100) + clampInt(pricing.middle, 0, 100)) <= 100
+    if (hasSegments) add(10)
+
+    if (!isBlank(note.finalText)) add(12)
+
+    return Math.min(100, score)
+  }, [orgTT, contacts, address, photos.length, manufacturers.selected.length, pricing, note.finalText])
 
   const isFormEmpty = useMemo(() => {
     const hasOrg =
@@ -225,7 +267,7 @@ export function PassportPage() {
   }
 
   function requestGeo() {
-    // Заглушка — позже подключим реальную геолокацию
+    // Заглушка — позже реальная геолокация + reverse geocode
     setAddress((a) => ({
       ...a,
       geo: {
@@ -333,7 +375,7 @@ export function PassportPage() {
   }
 
   function doSave() {
-    // Пока заглушка — позже реальное сохранение в БД
+    // Пока заглушка — позже реальное сохранение в Supabase + Drive
     setUI((s) => ({ ...s, savedOpen: true }))
   }
 
@@ -342,18 +384,24 @@ export function PassportPage() {
     nav("/app/surveys/start")
   }
 
-  const sumEm = clampInt(pricing.econom, 0, 100) + clampInt(pricing.middle, 0, 100)
-  const sumError = sumEm > 100
+  // ===== Manufacturer analytics (simple demo) =====
+  const totalPP = manufacturers.selected.reduce((s, x) => s + clampInt(x.pp, 0, 9999999), 0)
+  const totalKV = manufacturers.selected.reduce((s, x) => s + clampInt(x.kv, 0, 999), 0)
 
   // ===== UI =====
-
   return (
-    <div className="min-h-screen bg-background text-foreground px-4 py-4 flex justify-center">
+    <div className="min-h-screen px-4 py-4 flex justify-center glow">
       <div className="w-full max-w-[640px] space-y-4">
         {/* Header */}
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" onClick={goBack} aria-label="Назад">
+        <div className="flex items-center justify-between text-[13px] text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={goBack}
+              aria-label="Назад"
+              className="rounded-full"
+            >
               <ArrowLeft className="h-4 w-4" />
             </Button>
             <span>Сьогодні: {visitDate}</span>
@@ -361,76 +409,123 @@ export function PassportPage() {
           <span>Менеджер: {profile?.full_name ?? "—"}</span>
         </div>
 
+        {/* Title + progress */}
+        <div className="glass rounded-3xl p-4">
+          <div className="text-xl font-semibold leading-tight">Звіт ТТ</div>
+          <div className="text-sm text-muted-foreground">Нова торгова точка</div>
+
+          <div className="mt-4 space-y-2">
+            <div className="flex justify-between text-xs text-muted-foreground">
+              <span>Готовність звіту</span>
+              <span>{readiness}%</span>
+            </div>
+            <Progress value={readiness} className="h-2 bg-white/10" />
+          </div>
+        </div>
+
         {/* Організація та ТТ */}
         <Section title="Організація та ТТ">
-          <div className="space-y-3">
-            <RowTitle title="Організація" />
-            <Tabs
-              value={orgTT.orgMode}
-              onValueChange={(v) => setOrgTT((s) => ({ ...s, orgMode: v }))}
-            >
-              <TabsList className="w-full grid grid-cols-2">
-                <TabsTrigger value="select">Вибрати зі списку</TabsTrigger>
-                <TabsTrigger value="new">Нова організація</TabsTrigger>
-              </TabsList>
-            </Tabs>
+          <div className="space-y-4">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
+                Організація
+              </div>
 
-            {orgTT.orgMode === "select" ? (
-              <LabeledInput
-                label="Пошук організації"
-                value={orgTT.orgQuery}
-                onChange={(v) => setOrgTT((s) => ({ ...s, orgQuery: v }))}
-                placeholder="Почніть вводити назву…"
-              />
-            ) : (
-              <LabeledInput
-                label="Нова організація"
-                value={orgTT.orgNameNew}
-                onChange={(v) => setOrgTT((s) => ({ ...s, orgNameNew: v }))}
-                placeholder="Введіть назву організації…"
-              />
-            )}
+              <Tabs
+                value={orgTT.orgMode}
+                onValueChange={(v) => setOrgTT((s) => ({ ...s, orgMode: v }))}
+              >
+                <TabsList className="w-full grid grid-cols-2 bg-white/[0.04] p-1 rounded-2xl">
+                  <TabsTrigger
+                    value="select"
+                    className="rounded-xl data-[state=active]:bg-primary/20 data-[state=active]:text-foreground"
+                  >
+                    Вибрати зі списку
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="new"
+                    className="rounded-xl data-[state=active]:bg-primary/20 data-[state=active]:text-foreground"
+                  >
+                    Нова організація
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
 
-            <Separator className="my-1" />
+              <div className="mt-3">
+                {orgTT.orgMode === "select" ? (
+                  <LabeledInput
+                    label="Пошук організації"
+                    value={orgTT.orgQuery}
+                    onChange={(v) => setOrgTT((s) => ({ ...s, orgQuery: v }))}
+                    placeholder="Почніть вводити назву…"
+                  />
+                ) : (
+                  <LabeledInput
+                    label="Нова організація"
+                    value={orgTT.orgNameNew}
+                    onChange={(v) => setOrgTT((s) => ({ ...s, orgNameNew: v }))}
+                    placeholder="Введіть назву організації…"
+                  />
+                )}
+              </div>
+            </div>
 
-            <RowTitle title="Торгова точка" />
-            <Tabs
-              value={orgTT.ttMode}
-              onValueChange={(v) => setOrgTT((s) => ({ ...s, ttMode: v }))}
-            >
-              <TabsList className="w-full grid grid-cols-2">
-                <TabsTrigger value="select">Вибрати зі списку</TabsTrigger>
-                <TabsTrigger value="new">Нова ТТ</TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <Separator className="bg-white/10" />
 
-            {orgTT.ttMode === "select" ? (
-              <LabeledInput
-                label="Пошук ТТ"
-                value={orgTT.ttQuery}
-                onChange={(v) => setOrgTT((s) => ({ ...s, ttQuery: v }))}
-                placeholder="Почніть вводити назву ТТ…"
-              />
-            ) : (
-              <LabeledInput
-                label="Нова ТТ"
-                value={orgTT.ttNameNew}
-                onChange={(v) => setOrgTT((s) => ({ ...s, ttNameNew: v }))}
-                placeholder="Введіть назву ТТ…"
-              />
-            )}
+            <div>
+              <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
+                Торгова точка
+              </div>
 
-            <Separator className="my-1" />
+              <Tabs
+                value={orgTT.ttMode}
+                onValueChange={(v) => setOrgTT((s) => ({ ...s, ttMode: v }))}
+              >
+                <TabsList className="w-full grid grid-cols-2 bg-white/[0.04] p-1 rounded-2xl">
+                  <TabsTrigger
+                    value="select"
+                    className="rounded-xl data-[state=active]:bg-primary/20 data-[state=active]:text-foreground"
+                  >
+                    Вибрати зі списку
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="new"
+                    className="rounded-xl data-[state=active]:bg-primary/20 data-[state=active]:text-foreground"
+                  >
+                    Нова ТТ
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+
+              <div className="mt-3">
+                {orgTT.ttMode === "select" ? (
+                  <LabeledInput
+                    label="Пошук ТТ"
+                    value={orgTT.ttQuery}
+                    onChange={(v) => setOrgTT((s) => ({ ...s, ttQuery: v }))}
+                    placeholder="Почніть вводити назву ТТ…"
+                  />
+                ) : (
+                  <LabeledInput
+                    label="Нова ТТ"
+                    value={orgTT.ttNameNew}
+                    onChange={(v) => setOrgTT((s) => ({ ...s, ttNameNew: v }))}
+                    placeholder="Введіть назву ТТ…"
+                  />
+                )}
+              </div>
+            </div>
 
             <Button
               variant="outline"
-              className="w-full justify-center"
+              className="w-full justify-center gap-2 rounded-2xl border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
               onClick={() => setContacts((c) => ({ ...c, modalOpen: true }))}
             >
+              <Info className="h-4 w-4" />
               Контакти та тип ТТ
             </Button>
 
-            <div className="pt-1 space-y-3">
+            <div className="space-y-3 pt-1">
               <ToggleRow
                 label="Продаж подушок"
                 checked={commercial.sellsPillows}
@@ -459,7 +554,7 @@ export function PassportPage() {
                 />
               )}
 
-              <div className="flex items-end justify-between gap-3">
+              <div className="flex items-center justify-between gap-3">
                 <div className="text-sm text-muted-foreground">Прайс</div>
                 <div className="w-[260px]">
                   <LabeledSelect
@@ -475,9 +570,9 @@ export function PassportPage() {
           </div>
         </Section>
 
-        {/* Адреса + Гео + Фото */}
+        {/* Адреса */}
         <Section title="Адреса ТТ">
-          <div className="space-y-3">
+          <div className="space-y-4">
             <div className="grid gap-3">
               <LabeledInput
                 label="Місто"
@@ -499,38 +594,59 @@ export function PassportPage() {
               />
             </div>
 
-            <Button variant="secondary" className="w-full justify-center gap-2" onClick={requestGeo}>
+            <Button
+              variant="secondary"
+              className="w-full justify-center gap-2 rounded-2xl bg-white/[0.04] hover:bg-white/[0.07]"
+              onClick={requestGeo}
+            >
               <MapPin className="h-4 w-4" />
               Визначити геолокацію
             </Button>
 
             {address.geo && (
-              <div className="flex items-center justify-between rounded-xl border bg-muted/30 px-3 py-2">
+              <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/[0.03] px-3 py-2">
                 <div className="text-sm text-muted-foreground">{address.geo.resolvedAddress}</div>
-                <Button variant="ghost" size="icon" onClick={clearGeo} aria-label="Видалити гео">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={clearGeo}
+                  aria-label="Видалити гео"
+                  className="rounded-xl"
+                >
                   <X className="h-4 w-4" />
                 </Button>
               </div>
             )}
+          </div>
+        </Section>
 
-            <Separator />
-
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold">Фотозвіт</div>
-              <div className="text-xs text-muted-foreground">макс. 4</div>
+        {/* Фото */}
+        <Section title="Фотозвіт">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Додайте фото з камери</span>
+              <span>макс. 4</span>
             </div>
 
             <div className="flex flex-wrap gap-3">
               {photos.map((p) => (
                 <div
                   key={p.id}
-                  className="relative h-20 w-20 overflow-hidden rounded-xl border bg-muted/30"
+                  className="relative h-20 w-20 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]"
                 >
-                  <img src={p.url} alt="Фото" className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    className="h-full w-full"
+                    onClick={() => setUI((s) => ({ ...s, photoPreview: p.url }))}
+                    title="Переглянути"
+                  >
+                    <img src={p.url} alt="Фото" className="h-full w-full object-cover" />
+                  </button>
+
                   <Button
                     variant="secondary"
                     size="icon"
-                    className="absolute right-1 top-1 h-7 w-7 rounded-lg"
+                    className="absolute right-1 top-1 h-7 w-7 rounded-xl bg-black/40 hover:bg-black/55"
                     onClick={() => removePhoto(p.id)}
                     aria-label="Видалити фото"
                   >
@@ -540,7 +656,7 @@ export function PassportPage() {
               ))}
 
               {photos.length < 4 && (
-                <label className="h-20 w-20 cursor-pointer rounded-xl border border-dashed bg-muted/20 hover:bg-muted/30 flex flex-col items-center justify-center gap-1">
+                <label className="h-20 w-20 cursor-pointer rounded-2xl border border-dashed border-white/15 bg-white/[0.02] hover:bg-white/[0.05] flex flex-col items-center justify-center gap-1">
                   <Camera className="h-4 w-4 text-muted-foreground" />
                   <span className="text-[11px] text-muted-foreground">Додати</span>
                   <input
@@ -561,7 +677,7 @@ export function PassportPage() {
         <Section title="Виробники на виставці">
           <div className="space-y-3">
             <LabeledSelect
-              label="Додати виробника"
+              label=""
               value={manufacturers.activeAddId}
               onValueChange={(v) => setManufacturers((s) => ({ ...s, activeAddId: v }))}
               placeholder="+ Додати виробника"
@@ -573,7 +689,7 @@ export function PassportPage() {
 
             <Button
               variant="outline"
-              className="w-full justify-center gap-2"
+              className="w-full justify-center gap-2 rounded-2xl border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
               disabled={!manufacturers.activeAddId}
               onClick={startAddManufacturer}
             >
@@ -582,10 +698,10 @@ export function PassportPage() {
             </Button>
 
             {manufacturers.editorOpen && (
-              <div className="rounded-2xl border bg-muted/20 p-4 space-y-4">
+              <div className="glass-soft rounded-3xl p-4 space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="font-semibold">Показники</div>
-                  <Badge variant="secondary">
+                  <Badge className="bg-primary/20 text-foreground border border-white/10">
                     {MANUFACTURERS.find((x) => x.id === manufacturers.activeAddId)?.label ??
                       manufacturers.activeAddId}
                   </Badge>
@@ -606,19 +722,23 @@ export function PassportPage() {
                 />
 
                 <div className="grid grid-cols-2 gap-2">
-                  <Button variant="secondary" onClick={cancelManufacturerEditor}>
+                  <Button
+                    variant="secondary"
+                    className="rounded-2xl bg-white/[0.04] hover:bg-white/[0.07]"
+                    onClick={cancelManufacturerEditor}
+                  >
                     Скасувати
                   </Button>
-                  <Button onClick={saveManufacturerEditor}>Зберегти</Button>
+                  <Button className="rounded-2xl" onClick={saveManufacturerEditor}>
+                    Зберегти
+                  </Button>
                 </div>
               </div>
             )}
 
             {manufacturers.selected.length > 0 && (
               <>
-                <Separator />
-
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 pt-1">
                   {manufacturers.selected.map((it) => {
                     const label =
                       MANUFACTURERS.find((m) => m.id === it.manufacturerId)?.label ?? it.manufacturerId
@@ -627,7 +747,7 @@ export function PassportPage() {
                         key={it.manufacturerId}
                         type="button"
                         onClick={() => editManufacturer(it.manufacturerId)}
-                        className="group inline-flex items-center gap-2 rounded-full border bg-muted/20 px-3 py-1.5 text-sm hover:bg-muted/30"
+                        className="group inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm hover:bg-white/[0.06]"
                         title="Натисніть, щоб змінити"
                       >
                         <span className="font-medium">{label}</span>
@@ -639,7 +759,7 @@ export function PassportPage() {
                             e.stopPropagation()
                             removeManufacturer(it.manufacturerId)
                           }}
-                          className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full border bg-background/40 opacity-70 hover:opacity-100"
+                          className="ml-1 inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/10 bg-black/20 opacity-75 hover:opacity-100"
                           role="button"
                           aria-label="Видалити"
                         >
@@ -650,10 +770,61 @@ export function PassportPage() {
                   })}
                 </div>
 
-                <div className="rounded-2xl border bg-muted/10 p-3">
-                  <div className="text-sm font-semibold">Аналітика</div>
-                  <div className="text-xs text-muted-foreground">
-                    Тут буде відсоткове співвідношення (як на скріні). Додамо наступним кроком.
+                {/* Analytics like screenshot: two bars + legend */}
+                <div className="glass-soft rounded-3xl p-4 space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                        Частка продажів
+                      </div>
+                      <div className="mt-2 h-2 rounded-full bg-white/10 overflow-hidden">
+                        {/* blended bar: first = primary, rest = muted */}
+                        <div
+                          className="h-full bg-primary/80"
+                          style={{
+                            width: `${pct(
+                              clampInt(manufacturers.selected[0]?.pp ?? 0, 0, 9999999),
+                              totalPP
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                        Частка місць
+                      </div>
+                      <div className="mt-2 h-2 rounded-full bg-white/10 overflow-hidden">
+                        <div
+                          className="h-full bg-primary/80"
+                          style={{
+                            width: `${pct(
+                              clampInt(manufacturers.selected[0]?.kv ?? 0, 0, 999),
+                              totalKV
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    {manufacturers.selected.slice(0, 4).map((it) => {
+                      const label =
+                        MANUFACTURERS.find((m) => m.id === it.manufacturerId)?.label ?? it.manufacturerId
+                      const ppP = pct(clampInt(it.pp, 0, 9999999), totalPP)
+                      const kvP = pct(clampInt(it.kv, 0, 999), totalKV)
+                      return (
+                        <div key={it.manufacturerId} className="flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full bg-primary/80" />
+                            <span className="text-muted-foreground">{label}</span>
+                          </div>
+                          <span className="text-muted-foreground">{ppP}% / {kvP}%</span>
+                        </div>
+                      )
+                    })}
                   </div>
                 </div>
               </>
@@ -661,22 +832,26 @@ export function PassportPage() {
           </div>
         </Section>
 
-        {/* Модельний ряд (пока заглушка логики) */}
+        {/* Модельний ряд */}
         {isHighfoamSelected && (
           <Section title="Модельний ряд">
             <div className="grid grid-cols-2 gap-3">
               <Button
                 variant="outline"
-                className="justify-between"
+                className="justify-between rounded-2xl border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
                 onClick={() => setModelRange((s) => ({ ...s, highfoamCount: s.highfoamCount + 1 }))}
               >
                 <span>Highfoam</span>
-                <Badge>{modelRange.highfoamCount}</Badge>
+                <Badge className="bg-primary/20 border border-white/10">{modelRange.highfoamCount}</Badge>
               </Button>
 
-              <Button variant="outline" className="justify-between opacity-60" disabled>
+              <Button
+                variant="outline"
+                className="justify-between rounded-2xl border-white/10 bg-white/[0.02] opacity-60"
+                disabled
+              >
                 <span>Private Label</span>
-                <Badge>{modelRange.privateCount}</Badge>
+                <Badge className="bg-white/10 border border-white/10">{modelRange.privateCount}</Badge>
               </Button>
             </div>
 
@@ -703,13 +878,13 @@ export function PassportPage() {
               onChange={(v) => setPricing((s) => ({ ...s, middle: clampInt(v, 0, 100) }))}
             />
 
-            <div className="flex items-center justify-between rounded-2xl border bg-muted/10 px-4 py-3">
+            <div className="flex items-center justify-between rounded-3xl border border-white/10 bg-white/[0.03] px-4 py-3">
               <div className="text-sm text-muted-foreground">Преміум</div>
               <div className="text-lg font-semibold">{premium}</div>
             </div>
 
-            {sumError && (
-              <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+            {clampInt(pricing.econom, 0, 100) + clampInt(pricing.middle, 0, 100) > 100 && (
+              <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
                 Сума Економ + Середній не повинна перевищувати 100%
               </div>
             )}
@@ -723,11 +898,11 @@ export function PassportPage() {
               value={note.finalText}
               onChange={(e) => setNote((s) => ({ ...s, finalText: e.target.value }))}
               placeholder="Введіть текст або диктуйте голосом…"
-              className="min-h-[110px]"
+              className="min-h-[120px] rounded-3xl bg-white/[0.03] border-white/10 focus-visible:ring-primary/40"
             />
             <Button
               variant="secondary"
-              className="w-full justify-center gap-2"
+              className="w-full justify-center gap-2 rounded-2xl bg-white/[0.04] hover:bg-white/[0.07]"
               onClick={() => alert("Голос + AI додамо наступним кроком")}
             >
               <Mic className="h-4 w-4" />
@@ -738,7 +913,10 @@ export function PassportPage() {
 
         {/* Save */}
         <div className="pb-8">
-          <Button className="w-full h-12 text-base font-semibold gap-2" onClick={saveReport}>
+          <Button
+            className="w-full h-12 text-base font-semibold gap-2 rounded-2xl"
+            onClick={saveReport}
+          >
             <Save className="h-4 w-4" />
             Зберегти звіт
           </Button>
@@ -748,20 +926,29 @@ export function PassportPage() {
 
         {/* Back confirm */}
         <Dialog open={ui.confirmBackOpen} onOpenChange={(open) => setUI((s) => ({ ...s, confirmBackOpen: open }))}>
-          <DialogContent>
+          <DialogContent className="glass rounded-3xl border-white/10">
             <DialogHeader>
               <DialogTitle>Є незбережені зміни</DialogTitle>
               <DialogDescription>Зберегти звіт перед виходом?</DialogDescription>
             </DialogHeader>
             <DialogFooter className="gap-2 sm:gap-2">
-              <Button variant="secondary" onClick={() => setUI((s) => ({ ...s, confirmBackOpen: false }))}>
+              <Button
+                variant="secondary"
+                className="rounded-2xl bg-white/[0.04] hover:bg-white/[0.07]"
+                onClick={() => setUI((s) => ({ ...s, confirmBackOpen: false }))}
+              >
                 Скасувати
               </Button>
-              <Button variant="destructive" onClick={discardAndBack} className="gap-2">
+              <Button
+                variant="destructive"
+                className="rounded-2xl gap-2"
+                onClick={discardAndBack}
+              >
                 <Trash2 className="h-4 w-4" />
                 Вийти без збереження
               </Button>
               <Button
+                className="rounded-2xl"
                 onClick={() => {
                   setUI((s) => ({ ...s, confirmBackOpen: false }))
                   saveReport()
@@ -775,29 +962,35 @@ export function PassportPage() {
 
         {/* Geo confirm */}
         <Dialog open={ui.confirmGeoOpen} onOpenChange={(open) => setUI((s) => ({ ...s, confirmGeoOpen: open }))}>
-          <DialogContent>
+          <DialogContent className="glass rounded-3xl border-white/10">
             <DialogHeader>
               <DialogTitle>Геолокація не визначена</DialogTitle>
               <DialogDescription>Зберегти звіт без геолокації?</DialogDescription>
             </DialogHeader>
             <DialogFooter className="gap-2 sm:gap-2">
-              <Button variant="secondary" onClick={() => setUI((s) => ({ ...s, confirmGeoOpen: false }))}>
+              <Button
+                variant="secondary"
+                className="rounded-2xl bg-white/[0.04] hover:bg-white/[0.07]"
+                onClick={() => setUI((s) => ({ ...s, confirmGeoOpen: false }))}
+              >
                 Скасувати
               </Button>
-              <Button onClick={saveWithoutGeo}>Зберегти без геолокації</Button>
+              <Button className="rounded-2xl" onClick={saveWithoutGeo}>
+                Зберегти без геолокації
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
 
         {/* Saved */}
         <Dialog open={ui.savedOpen} onOpenChange={(open) => setUI((s) => ({ ...s, savedOpen: open }))}>
-          <DialogContent>
+          <DialogContent className="glass rounded-3xl border-white/10">
             <DialogHeader>
               <DialogTitle>Звіт збережено</DialogTitle>
               <DialogDescription>Дані успішно синхронізовано (поки заглушка).</DialogDescription>
             </DialogHeader>
 
-            <div className="rounded-2xl border bg-muted/10 p-4 text-sm">
+            <div className="rounded-3xl border border-white/10 bg-white/[0.03] p-4 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">ТТ</span>
                 <span className="font-medium">
@@ -815,7 +1008,7 @@ export function PassportPage() {
             </div>
 
             <DialogFooter>
-              <Button className="w-full" onClick={continueAfterSave}>
+              <Button className="w-full rounded-2xl" onClick={continueAfterSave}>
                 Продовжити
               </Button>
             </DialogFooter>
@@ -827,7 +1020,7 @@ export function PassportPage() {
           open={contacts.modalOpen}
           onOpenChange={(open) => setContacts((c) => ({ ...c, modalOpen: open }))}
         >
-          <DialogContent className="sm:max-w-[560px]">
+          <DialogContent className="glass rounded-3xl border-white/10 sm:max-w-[560px]">
             <DialogHeader>
               <DialogTitle>Контактна інформація</DialogTitle>
               <DialogDescription>Заповніть контакти та тип торгової точки</DialogDescription>
@@ -862,17 +1055,19 @@ export function PassportPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>Додаткові нотатки / Опис ТТ</Label>
+                <Label className="text-xs text-muted-foreground">Опис ТТ</Label>
                 <Textarea
                   value={contacts.ttDescription}
                   onChange={(e) => setContacts((s) => ({ ...s, ttDescription: e.target.value }))}
                   placeholder="Опис торгової точки…"
-                  className="min-h-[90px]"
+                  className="min-h-[90px] rounded-3xl bg-white/[0.03] border-white/10 focus-visible:ring-primary/40"
                 />
               </div>
 
               <div className="pt-2">
-                <div className="text-sm font-semibold mb-2">Тип торгової точки</div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">
+                  Тип торгової точки
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   {TT_TYPES.map((t) => {
                     const active = contacts.ttTypeId === t.id
@@ -880,8 +1075,11 @@ export function PassportPage() {
                       <Button
                         key={t.id}
                         type="button"
-                        variant={active ? "default" : "secondary"}
-                        className={cn("justify-center", !active && "bg-muted/30")}
+                        variant="secondary"
+                        className={cn(
+                          "rounded-2xl bg-white/[0.03] hover:bg-white/[0.06] border border-white/10",
+                          active && "bg-primary/20 border-primary/30"
+                        )}
                         onClick={() => setContacts((s) => ({ ...s, ttTypeId: t.id }))}
                       >
                         {t.label}
@@ -893,11 +1091,39 @@ export function PassportPage() {
             </div>
 
             <DialogFooter className="gap-2 sm:gap-2">
-              <Button variant="secondary" onClick={() => setContacts((c) => ({ ...c, modalOpen: false }))}>
+              <Button
+                variant="secondary"
+                className="rounded-2xl bg-white/[0.04] hover:bg-white/[0.07]"
+                onClick={() => setContacts((c) => ({ ...c, modalOpen: false }))}
+              >
                 Скасувати
               </Button>
-              <Button onClick={() => setContacts((c) => ({ ...c, modalOpen: false }))}>Готово</Button>
+              <Button className="rounded-2xl" onClick={() => setContacts((c) => ({ ...c, modalOpen: false }))}>
+                Готово
+              </Button>
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Photo preview */}
+        <Dialog
+          open={!!ui.photoPreview}
+          onOpenChange={(open) => setUI((s) => ({ ...s, photoPreview: open ? s.photoPreview : null }))}
+        >
+          <DialogContent className="glass rounded-3xl border-white/10 max-w-[90vw] sm:max-w-[640px] p-0 overflow-hidden">
+            {ui.photoPreview && (
+              <div className="relative">
+                <img src={ui.photoPreview} alt="Preview" className="w-full h-auto" />
+                <Button
+                  variant="secondary"
+                  size="icon"
+                  className="absolute right-3 top-3 rounded-xl bg-black/40 hover:bg-black/55"
+                  onClick={() => setUI((s) => ({ ...s, photoPreview: null }))}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
           </DialogContent>
         </Dialog>
       </div>
@@ -909,24 +1135,25 @@ export function PassportPage() {
 
 function Section({ title, children }) {
   return (
-    <Card className="border-muted/40 bg-card/60 backdrop-blur">
-      <CardContent className="pt-6 space-y-4">
-        <div className="text-base font-semibold tracking-tight">{title}</div>
+    <Card className="glass rounded-3xl">
+      <CardContent className="pt-5 space-y-4">
+        <div className="text-sm font-semibold tracking-tight">{title}</div>
         {children}
       </CardContent>
     </Card>
   )
 }
 
-function RowTitle({ title }) {
-  return <div className="text-sm text-muted-foreground">{title}</div>
-}
-
 function LabeledInput({ label, value, onChange, placeholder }) {
   return (
     <div className="space-y-1.5">
       {label ? <Label className="text-xs text-muted-foreground">{label}</Label> : null}
-      <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="rounded-2xl bg-white/[0.03] border-white/10 focus-visible:ring-primary/40"
+      />
     </div>
   )
 }
@@ -937,10 +1164,10 @@ function LabeledSelect({ label, value, onValueChange, placeholder, items }) {
       {label ? <Label className="text-xs text-muted-foreground">{label}</Label> : null}
 
       <Select value={value || ""} onValueChange={onValueChange}>
-        <SelectTrigger>
+        <SelectTrigger className="rounded-2xl bg-white/[0.03] border-white/10 focus:ring-primary/40">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent className="bg-[#0b1020] border-white/10">
           {items.map((it) => (
             <SelectItem key={it.id} value={it.id} disabled={!!it.disabled}>
               {it.label}
@@ -969,7 +1196,7 @@ function NumberSlider({ label, max, value, onChange }) {
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm text-muted-foreground">{label}</div>
         <Input
-          className="w-24 text-right"
+          className="w-24 text-right rounded-2xl bg-white/[0.03] border-white/10 focus-visible:ring-primary/40"
           value={safe}
           onChange={(e) => onChange(clampInt(e.target.value, 0, max))}
         />
@@ -981,7 +1208,6 @@ function NumberSlider({ label, max, value, onChange }) {
         max={max}
         value={safe}
         onChange={(e) => onChange(clampInt(e.target.value, 0, max))}
-        className="w-full accent-indigo-400"
       />
     </div>
   )
